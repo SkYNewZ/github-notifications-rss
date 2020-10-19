@@ -1,14 +1,13 @@
 // Package function generate a JSON feed from authenticated user notifications
 // Check https://jsonfeed.org/version/1.1 for more details
 // https://docs.github.com/en/rest/reference/activity#list-notifications-for-the-authenticated-user
-package function
+package main
 
 import (
 	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"os"
 	"sort"
 	"strings"
 	"sync"
@@ -16,11 +15,9 @@ import (
 
 	"github.com/google/go-github/v32/github"
 	"github.com/patrickmn/go-cache"
+	log "github.com/sirupsen/logrus"
 	"golang.org/x/oauth2"
 	"golang.org/x/text/language"
-
-	joonix "github.com/joonix/log"
-	log "github.com/sirupsen/logrus"
 )
 
 var githubClient *github.Client
@@ -60,12 +57,6 @@ type item struct {
 }
 
 func init() {
-	// Set up logger for Stackdriver
-	log.SetLevel(log.DebugLevel)
-	if os.Getenv("GCP_PROJECT") != "" || os.Getenv("FUNCTION_NAME") != "" {
-		log.SetFormatter(joonix.NewFormatter())
-	}
-
 	// Set up cache for rate-limit request
 	// Create a cache with a default expiration time of 5 minutes, and which
 	// purges expired items every 10 minutes
@@ -90,10 +81,6 @@ func customGithubRequest(ctx context.Context, url string) (string, *github.Respo
 	return result["html_url"].(string), nil, nil
 }
 
-func getFeedURLFromGoogleRuntime() string {
-	return fmt.Sprintf("https://%s-%s.cloudfunctions.net/%s", os.Getenv("FUNCTION_REGION"), os.Getenv("GCP_PROJECT"), os.Getenv("FUNCTION_NAME"))
-}
-
 func sendResponse(w http.ResponseWriter, feed *jsonFeed) {
 	data, _ := json.Marshal(feed)
 	w.Header().Set("Content-Type", "application/feed+json")
@@ -101,8 +88,7 @@ func sendResponse(w http.ResponseWriter, feed *jsonFeed) {
 	w.Write(data)
 }
 
-// GetGithubNotificationsJSONFeed Google CLoud Function entrypoint
-func GetGithubNotificationsJSONFeed(w http.ResponseWriter, r *http.Request) {
+func getGithubNotificationsJSONFeed(w http.ResponseWriter, r *http.Request) {
 	log.Infoln("Read Github user token from request")
 	var githubToken string = r.URL.Query().Get("token")
 	if githubToken == "" {
@@ -207,7 +193,7 @@ func GetGithubNotificationsJSONFeed(w http.ResponseWriter, r *http.Request) {
 		Version:     "https://jsonfeed.org/version/1.1",
 		Title:       "Github Notifications",
 		HomePageURL: "https://github.com/notifications",
-		FeedURL:     getFeedURLFromGoogleRuntime(),
+		FeedURL:     feedURL,
 		Description: "Your Github notifications",
 		Icon:        "https://www.iconfinder.com/data/icons/octicons/1024/mark-github-512.png",
 		Favicon:     "https://github.com/favicon.ico",
