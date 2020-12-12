@@ -65,7 +65,7 @@ func init() {
 
 // Execute a custom HTTP request with Github client
 func customGithubRequest(ctx context.Context, url string) (string, *github.Response, error) {
-	log.Debugf("URL being requested: %s\n", url)
+	log.Debugf("URL being requested: %s", url)
 	req, err := githubClient.NewRequest("GET", url, nil)
 	if err != nil {
 		return "", nil, err
@@ -76,6 +76,7 @@ func customGithubRequest(ctx context.Context, url string) (string, *github.Respo
 	if err != nil {
 		return "", resp, err
 	}
+	defer resp.Body.Close()
 
 	// html_url is always a string
 	return result["html_url"].(string), nil, nil
@@ -85,12 +86,12 @@ func sendResponse(w http.ResponseWriter, feed *jsonFeed) {
 	data, _ := json.Marshal(feed)
 	w.Header().Set("Content-Type", "application/feed+json")
 	w.Header().Set("Cache-Control", fmt.Sprintf("max-age=%s", 5*time.Minute))
-	w.Write(data)
+	_, _ = w.Write(data)
 }
 
 func getGithubNotificationsJSONFeed(w http.ResponseWriter, r *http.Request) {
 	log.Infoln("Read Github user token from request")
-	var githubToken string = r.URL.Query().Get("token")
+	var githubToken = r.URL.Query().Get("token")
 	if githubToken == "" {
 		log.Warningln("Token not found, aborting")
 		http.Error(w, "Forbidden", 403)
@@ -138,13 +139,13 @@ func getGithubNotificationsJSONFeed(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// For each notifications, create a feed item
-	log.Infof("Found %d notifications\n", len(notifications))
-	var items []item = make([]item, 0)
+	log.Infof("Found %d notifications", len(notifications))
+	var items = make([]item, len(notifications))
 	var wg sync.WaitGroup
+	wg.Add(len(notifications))
 
-	for _, notification := range notifications {
-		wg.Add(1)
-		go func(n *github.Notification) {
+	for i, notification := range notifications {
+		go func(j int, n *github.Notification) {
 			defer wg.Done()
 
 			// Create default title
@@ -152,36 +153,45 @@ func getGithubNotificationsJSONFeed(w http.ResponseWriter, r *http.Request) {
 
 			// Default Notification HTML URL to repo URL for private repo
 			// https://docs.github.com/en/free-pro-team@latest/rest/reference/pulls#get-a-pull-request
-			var htmlURL string = strings.Replace(n.Subject.GetURL(), "https://api.github.com/repos", "https://github.com", 1)
+			var htmlURL = strings.Replace(n.Subject.GetURL(), "https://api.github.com/repos", "https://github.com", 1)
 			htmlURL = strings.Replace(htmlURL, "pulls", "pull", 1)
 
-			// Try to get  the real URL in case of public repo
-			u, _, err := customGithubRequest(ctx, n.Subject.GetURL())
-			if err == nil {
-				// If not error, use this URL instead of the default one
-				htmlURL = u
-			} else {
-				// Use Github Error if provided
-				var m []string = []string{err.Error()}
-				if v, ok := err.(*github.ErrorResponse); ok {
-					for _, e := range v.Errors {
-						m = append(m, e.Message)
-					}
-				}
-				log.Errorf("Error on notifications list: %s", strings.Join(m, ", "))
-			}
-
-			items = append(items, item{
+			// Create the default response object
+			items[j] = item{
 				ID:            n.GetID(),
 				URL:           htmlURL,
 				Title:         t,
 				ContentText:   t,
 				DatePublished: n.GetUpdatedAt().Format(time.RFC3339),
-			})
-		}(notification)
+			}
+
+			// If invalid notifications, use the repo URL instead and continue
+			if n.Subject.GetURL() == "" {
+				items[j].URL = n.Repository.GetHTMLURL()
+				log.Warningf("[%s] %q: missing URL", n.Repository.GetFullName(), n.Subject.GetTitle())
+				return
+			}
+
+			// Try to get the real URL in case of public repo
+			u, _, err := customGithubRequest(ctx, n.Subject.GetURL())
+			if err == nil {
+				// if not error, replace the URL with the real subject and continue
+				items[j].URL = u
+				return
+			}
+
+			// Else, use the GitHub error response
+			var m = []string{err.Error()}
+			if v, ok := err.(*github.ErrorResponse); ok {
+				for _, e := range v.Errors {
+					m = append(m, e.Message)
+				}
+			}
+
+			log.Errorf("Error on notifications list: %s", strings.Join(m, ", "))
+		}(i, notification)
 	}
 
-	log.Debugln("Waiting for process")
 	wg.Wait()
 
 	// Sort items by date
@@ -214,8 +224,10 @@ func getGithubNotificationsJSONFeed(w http.ResponseWriter, r *http.Request) {
 		Items:    items,
 	}
 
-	log.Infoln("Store in cache")
-	c.Set(githubToken, feed, cache.DefaultExpiration)
+	if useCache {
+		log.Infoln("Store in cache")
+		c.Set(githubToken, feed, cache.DefaultExpiration)
+	}
 
 	// Send final response
 	sendResponse(w, feed)
