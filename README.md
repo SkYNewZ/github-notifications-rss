@@ -1,16 +1,22 @@
 # github-notifications-rss
 
-Go HTTP handler to recevice your Github notifications as [JSONFeed](https://jsonfeed.org/version/1.1).
-It can be use to view your Github notfications feed is your favorite RSS reader !
+Go HTTP handler to receive your Github notifications as [JSONFeed](https://jsonfeed.org/version/1.1).
+It can be used to view your Github notifications feed is your favorite RSS reader !
 
-Designed to be deploy on a [Google Cloud Function](https://cloud.google.com/functions/docs/writing/http)
+> Warning: Depends on you GitHub account type (Enterprise/Free/Pro), you probably don't see the details of some notifications.
+> Read https://docs.github.com/en/free-pro-team@latest/rest/reference/pulls#get-a-pull-request for more details. 
 
 ## Usage
 
-1. Create a Github Personnal token [here](https://github.com/settings/tokens)
-2. If you want your private organization notifcations is this feed, clic on "Enable SSO"
-3. Run this project wherever you want
-4. Get your feed at `http://URL/URI?token=GITHUB_TOKEN`
+1. Create a Github Personal token [here](https://github.com/settings/tokens)
+2. If you want your organization notifications in this feed, click on "Enable SSO"
+3. You need to set the `FEED_URL` environment variable for this feed to be understood by your RSS client.
+4. Simply build/run the `/main.go` file.
+5. By default, it listens on `127.0.0.1:8080`. Change `LISTEN_ADDR` if you want a different interface.
+6. Check out `http://127.0.0.1:8080/feed?token=<TOKEN>`
+
+- You can disable cache responses by setting `NO_CACHE=1`.
+- A health check endpoint in available on `/ping`.
 
 ## Example output:
 
@@ -74,23 +80,4 @@ Designed to be deploy on a [Google Cloud Function](https://cloud.google.com/func
     }
   ]
 }
-```
-
-## Run in local
-
-Simply build/run the `/main.go` file.
-
-## Run in a Google Cloud Function
-
-```sh
-#!/bin/bash
-
-set -e
-(cd function && gcloud functions deploy github_notifications_feed \
---runtime=go111 \
---trigger-http \
---allow-unauthenticated \
---project=PROJECT \
---region=europe-west1 \
---entry-point=GetGithubNotificationsJSONFeed)
 ```
