@@ -9,15 +9,20 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
-var port string = "8080"
-var addr string = "127.0.0.1"
+var port = "8080"
+var addr = "127.0.0.1"
 var feedURL string
+var useCache = true
 
 func init() {
 	log.SetLevel(log.DebugLevel)
 	addr = validIP()
 	feedURL = validURL()
 	port = validPort()
+	useCache = os.Getenv("NO_CACHE") != "1"
+	if !useCache {
+		log.Debugf("caching response is disabled")
+	}
 }
 
 func validURL() string {
@@ -25,7 +30,7 @@ func validURL() string {
 		log.Fatalln("Missing $FEED_URL")
 	}
 
-	_, err := url.ParseRequestURI(os.Getenv("FEED_URL"))
+	_, err := url.Parse(os.Getenv("FEED_URL"))
 	if err != nil {
 		log.Fatalln("Invalid $FEED_URL")
 	}
