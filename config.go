@@ -10,7 +10,7 @@ import (
 )
 
 var port = "8080"
-var addr = "127.0.0.1"
+var addr = "0.0.0.0"
 var feedURL string
 var useCache = true
 
