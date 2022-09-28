@@ -1,0 +1,22 @@
+image:
+  tag: 8e4f669
+
+ingress:
+  enabled: true
+  className: "nginx"
+  hosts:
+    - host: github-notifications-rss.skynewz.cloud
+      paths:
+        - path: /
+          pathType: ImplementationSpecific
+
+resources:
+  limits:
+    cpu: 50m
+    memory: 64Mi
+  requests:
+    cpu: 10m
+    memory: 32Mi
+
+feed:
+  url: https://github-notifications-rss.skynewz.cloud/feed
