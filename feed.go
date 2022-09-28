@@ -20,10 +20,12 @@ import (
 	"golang.org/x/text/language"
 )
 
-var githubClient *github.Client
-var c *cache.Cache
+// Set up cache for rate-limit request
+// Create a cache with a default expiration time of 5 minutes, and which
+// purges expired items every 10 minutes.
+var c = cache.New(5*time.Minute, 10*time.Minute)
 
-// Check https://jsonfeed.org/version/1.1 for more details
+// Check https://jsonfeed.org/version/1.1 for more details.
 type jsonFeed struct {
 	Version     string       `json:"version"`
 	Title       string       `json:"title"`
@@ -37,7 +39,7 @@ type jsonFeed struct {
 	Authors     []author     `json:"authors,omitempty"`
 	Language    language.Tag `json:"language,omitempty"`
 	Expired     bool         `json:"expired,omitempty"`
-	Items       []item       `json:"items"`
+	Items       []*item      `json:"items"`
 }
 
 type author struct {
@@ -56,25 +58,18 @@ type item struct {
 	DateModified  string `json:"date_modified,omitempty"`
 }
 
-func init() {
-	// Set up cache for rate-limit request
-	// Create a cache with a default expiration time of 5 minutes, and which
-	// purges expired items every 10 minutes
-	c = cache.New(5*time.Minute, 10*time.Minute)
-}
-
-// Execute a custom HTTP request with Github client
-func customGithubRequest(ctx context.Context, url string) (string, *github.Response, error) {
+// Execute a custom HTTP request with GitHub client.
+func customGithubRequest(ctx context.Context, url string, githubClient *github.Client) (string, *github.Response, error) {
 	log.Debugf("URL being requested: %s", url)
-	req, err := githubClient.NewRequest("GET", url, nil)
+	req, err := githubClient.NewRequest(http.MethodGet, url, http.NoBody)
 	if err != nil {
-		return "", nil, err
+		return "", nil, fmt.Errorf("fail to make GitHub request: %w", err)
 	}
 
 	var result map[string]interface{}
 	resp, err := githubClient.Do(ctx, req, &result)
 	if err != nil {
-		return "", resp, err
+		return "", resp, fmt.Errorf("fail to execute GitHub request: %w", err)
 	}
 	defer resp.Body.Close()
 
@@ -83,7 +78,12 @@ func customGithubRequest(ctx context.Context, url string) (string, *github.Respo
 }
 
 func sendResponse(w http.ResponseWriter, feed *jsonFeed) {
-	data, _ := json.Marshal(feed)
+	data, err := json.Marshal(feed)
+	if err != nil {
+		log.WithError(err).Errorln("fail to json encode feed, aborting")
+		return
+	}
+
 	w.Header().Set("Content-Type", "application/feed+json")
 	w.Header().Set("Cache-Control", fmt.Sprintf("max-age=%s", 5*time.Minute))
 	_, _ = w.Write(data)
@@ -91,10 +91,10 @@ func sendResponse(w http.ResponseWriter, feed *jsonFeed) {
 
 func getGithubNotificationsJSONFeed(w http.ResponseWriter, r *http.Request) {
 	log.Infoln("Read Github user token from request")
-	var githubToken = r.URL.Query().Get("token")
+	githubToken := r.URL.Query().Get("token")
 	if githubToken == "" {
 		log.Warningln("Token not found, aborting")
-		http.Error(w, "Forbidden", 403)
+		http.Error(w, "Forbidden", http.StatusForbidden)
 		return
 	}
 
@@ -109,21 +109,10 @@ func getGithubNotificationsJSONFeed(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ctx := context.Background()
-	// Create Github client only if not exist yet
-	if githubClient == nil {
-		log.Debugln("Create Github client")
-		ts := oauth2.StaticTokenSource(
-			&oauth2.Token{AccessToken: githubToken},
-		)
-		tc := oauth2.NewClient(ctx, ts)
-
-		// Store github client in memory for future calls
-		githubClient = github.NewClient(tc)
-	}
+	githubClient := makeGitHubClient(r.Context(), githubToken)
 
 	log.Debugln("List unread notifications")
-	notifications, resp, err := githubClient.Activity.ListNotifications(ctx, &github.NotificationListOptions{
+	notifications, resp, err := githubClient.Activity.ListNotifications(r.Context(), &github.NotificationListOptions{
 		// Get all notifications
 		All: true,
 
@@ -138,9 +127,9 @@ func getGithubNotificationsJSONFeed(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// For each notifications, create a feed item
+	// For each notification, create a feed item
 	log.Infof("Found %d notifications", len(notifications))
-	var items = make([]item, len(notifications))
+	items := make([]*item, len(notifications))
 	var wg sync.WaitGroup
 	wg.Add(len(notifications))
 
@@ -153,11 +142,11 @@ func getGithubNotificationsJSONFeed(w http.ResponseWriter, r *http.Request) {
 
 			// Default Notification HTML URL to repo URL for private repo
 			// https://docs.github.com/en/free-pro-team@latest/rest/reference/pulls#get-a-pull-request
-			var htmlURL = strings.Replace(n.Subject.GetURL(), "https://api.github.com/repos", "https://github.com", 1)
+			htmlURL := strings.Replace(n.Subject.GetURL(), "https://api.github.com/repos", "https://github.com", 1)
 			htmlURL = strings.Replace(htmlURL, "pulls", "pull", 1)
 
 			// Create the default response object
-			items[j] = item{
+			items[j] = &item{
 				ID:            n.GetID(),
 				URL:           htmlURL,
 				Title:         t,
@@ -173,22 +162,12 @@ func getGithubNotificationsJSONFeed(w http.ResponseWriter, r *http.Request) {
 			}
 
 			// Try to get the real URL in case of public repo
-			u, _, err := customGithubRequest(ctx, n.Subject.GetURL())
-			if err == nil {
+			if u, _, err := customGithubRequest(r.Context(), n.Subject.GetURL(), githubClient); err != nil {
+				log.WithError(err).Errorf("error on notifications list")
+			} else {
 				// if not error, replace the URL with the real subject and continue
 				items[j].URL = u
-				return
 			}
-
-			// Else, use the GitHub error response
-			var m = []string{err.Error()}
-			if v, ok := err.(*github.ErrorResponse); ok {
-				for _, e := range v.Errors {
-					m = append(m, e.Message)
-				}
-			}
-
-			log.Errorf("Error on notifications list: %s", strings.Join(m, ", "))
 		}(i, notification)
 	}
 
@@ -215,7 +194,7 @@ func getGithubNotificationsJSONFeed(w http.ResponseWriter, r *http.Request) {
 			},
 			{
 				Name:   "Github",
-				Avatar: "https://www.iconfinder.com/data/icons/octicons/1024/mark-github-512.png",
+				Avatar: "https://cdn4.iconfinder.com/data/icons/octicons/1024/mark-github-512.png",
 				URL:    "https://github.com",
 			},
 		},
@@ -224,11 +203,17 @@ func getGithubNotificationsJSONFeed(w http.ResponseWriter, r *http.Request) {
 		Items:    items,
 	}
 
-	if useCache {
+	if !CacheDisabled() {
 		log.Infoln("Store in cache")
 		c.Set(githubToken, feed, cache.DefaultExpiration)
 	}
 
 	// Send final response
 	sendResponse(w, feed)
+}
+
+func makeGitHubClient(ctx context.Context, token string) *github.Client {
+	ts := oauth2.StaticTokenSource(&oauth2.Token{AccessToken: token})
+	tc := oauth2.NewClient(ctx, ts)
+	return github.NewClient(tc)
 }

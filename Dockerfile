@@ -1,12 +1,21 @@
-FROM golang:1.15-alpine3.12
-WORKDIR /go/src/github.com/SkYNewZ/github-notifications-rss
-COPY go.* ./
+FROM golang:1.19-alpine as builder
+WORKDIR /workspace
+
+COPY go.mod go.mod
+COPY go.sum go.sum
 RUN go mod download
 
-COPY . .
-RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -ldflags '-extldflags "-static"' -o /github-notifications-rss .
+COPY config.go config.go
+COPY feed.go feed.go
+COPY main.go main.go
 
-FROM scratch
+RUN CGO_ENABLED=0 \
+    GOOS=linux \
+    GOARCH=amd64 \
+    go build -a -o /github-notifications-rss .
+
+FROM gcr.io/distroless/static:nonroot
+WORKDIR /
 
 ARG BUILD_DATE
 ARG VCS_REF
@@ -19,6 +28,7 @@ LABEL org.label-schema.description="Generate a JSON feed from your Github notifi
 LABEL org.label-schema.url="https://github.com/SkYNewZ/github-notifications-rss"
 LABEL org.label-schema.vcs-ref=$VCS_REF
 
-COPY --from=0 /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
-COPY --from=0 /github-notifications-rss /github-notifications-rss
+COPY --from=builder /github-notifications-rss /github-notifications-rss
+USER 65532:65532
+
 ENTRYPOINT ["/github-notifications-rss"]

@@ -1,65 +1,46 @@
 package main
 
 import (
-	"net"
 	"net/url"
 	"os"
-	"strconv"
 
 	log "github.com/sirupsen/logrus"
 )
 
-var port = "8080"
-var addr = "0.0.0.0"
 var feedURL string
-var useCache = true
+
+const (
+	defaultPort    string = "8080"
+	defaultFeedURL string = "http://localhost:8080/feed"
+
+	envFeedURL      string = "FEED_URL"
+	envPort         string = "PORT"
+	envDisableCache string = "NO_CACHE"
+)
 
 func init() {
 	log.SetLevel(log.DebugLevel)
-	addr = validIP()
 	feedURL = validURL()
-	port = validPort()
-	useCache = os.Getenv("NO_CACHE") != "1"
-	if !useCache {
+
+	if CacheDisabled() {
 		log.Debugf("caching response is disabled")
 	}
 }
 
 func validURL() string {
-	if v := os.Getenv("FEED_URL"); v == "" {
-		log.Fatalln("Missing $FEED_URL")
+	v := os.Getenv(envFeedURL)
+	if v == "" {
+		return defaultFeedURL
 	}
 
-	_, err := url.Parse(os.Getenv("FEED_URL"))
-	if err != nil {
-		log.Fatalln("Invalid $FEED_URL")
+	if _, err := url.Parse(v); err != nil {
+		log.Fatalln("Invalid $FEED_URL provided")
 	}
 
-	return os.Getenv("FEED_URL")
+	return v
 }
 
-func validIP() string {
-	if v := os.Getenv("LISTEN_ADDR"); v == "" {
-		// ADDR not filled, return default
-		return addr
-	}
-
-	if net.ParseIP(os.Getenv("LISTEN_ADDR")) == nil {
-		log.Fatalln("Invalid $LISTEN_ADDR")
-	}
-
-	return os.Getenv("LISTEN_ADDR")
-}
-
-func validPort() string {
-	if v := os.Getenv("PORT"); v == "" {
-		// PORT not filled, return default
-		return port
-	}
-
-	if _, err := strconv.Atoi(os.Getenv("PORT")); err != nil {
-		log.Fatalln("Invalid $PORT")
-	}
-
-	return os.Getenv("PORT")
+// CacheDisabled return true if cache is disabled.
+func CacheDisabled() bool {
+	return os.Getenv(envDisableCache) == "1"
 }

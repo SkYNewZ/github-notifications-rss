@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -24,8 +25,13 @@ func main() {
 	// Log global router access logs
 	loggedRouter := handlers.LoggingHandler(os.Stdout, r)
 
+	port := defaultPort
+	if v := os.Getenv(envPort); v != "" {
+		port = v
+	}
+
 	srv := &http.Server{
-		Addr:         addr + ":" + port,
+		Addr:         fmt.Sprintf(":%s", port),
 		WriteTimeout: time.Second * 15,
 		ReadTimeout:  time.Second * 15,
 		IdleTimeout:  time.Second * 60,
@@ -34,18 +40,22 @@ func main() {
 
 	go func() {
 		log.Printf("Listening on %s", srv.Addr)
-		if err := srv.ListenAndServe(); err != nil {
+		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			log.Fatalln(err)
 		}
 	}()
 
-	c := make(chan os.Signal, 1)
-	signal.Notify(c, os.Interrupt)
-	<-c
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	<-ctx.Done()
 
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second*15)
+	// Reset os.Interrupt default behavior
+	stop()
+	log.Println("shutting down gracefully, press Ctrl+C again to force")
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second*5)
 	defer cancel()
-	_ = srv.Shutdown(ctx)
-	log.Println("shutting down")
-	os.Exit(0)
+
+	if err := srv.Shutdown(ctx); err != nil {
+		log.Fatalf("fail to shutdown server: %s", err)
+	}
 }

@@ -1,0 +1,70 @@
+version: '3'
+
+vars:
+  REGISTRY: docker.io
+  IMAGE: skynewz/github-notifications-rss
+  BUILD_DATE:
+    sh: date -u +'%Y-%m-%dT%H:%M:%SZ'
+  VCS_REF:
+    sh: git rev-parse --short HEAD
+
+tasks:
+  build-image:
+    internal: true
+    cmds:
+      - |
+        {{.CONTAINER_ENGINE}} build -t "{{.REGISTRY}}/{{.IMAGE}}:{{.VCS_REF}}" --build-arg BUILD_DATE={{.BUILD_DATE}} --build-arg VCS_REF={{.VCS_REF}} .
+    preconditions:
+      - sh: "command -v {{.CONTAINER_ENGINE}}"
+        msg: "command not found: {{.CONTAINER_ENGINE}}"
+
+  push-image:
+    internal: true
+    cmds:
+      - |
+        {{.CONTAINER_ENGINE}} push "{{.REGISTRY}}/{{.IMAGE}}:{{.VCS_REF}}"
+        {{.CONTAINER_ENGINE}} tag "{{.REGISTRY}}/{{.IMAGE}}:{{.VCS_REF}}" "{{.REGISTRY}}/{{.IMAGE}}:latest"
+        {{.CONTAINER_ENGINE}} push "{{.REGISTRY}}/{{.IMAGE}}:latest"
+    preconditions:
+      - sh: "command -v {{.CONTAINER_ENGINE}}"
+        msg: "command not found: {{.CONTAINER_ENGINE}}"
+
+  podman-build:
+    desc: Build image using Podman
+    cmds:
+      - task: build-image
+        vars:
+          CONTAINER_ENGINE: podman
+
+  podman-push:
+    desc: Push image using Podman
+    cmds:
+      - task: push-image
+        vars:
+          CONTAINER_ENGINE: podman
+
+  podman-build-push:
+    desc: Build and push image using Podman
+    cmds:
+      - task: podman-build
+      - task: podman-push
+
+  docker-build-push:
+    desc: Build and push image using Docker
+    cmds:
+      - task: docker-build
+      - task: docker-push
+
+  docker-build:
+    desc: Build image using Docker
+    cmds:
+      - task: build-image
+        vars:
+          CONTAINER_ENGINE: docker
+
+  docker-push:
+    desc: Push image using Docker
+    cmds:
+      - task: push-image
+        vars:
+          CONTAINER_ENGINE: docker

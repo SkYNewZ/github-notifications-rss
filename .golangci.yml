@@ -1,0 +1,36 @@
+run:
+  timeout: 5m
+  tests: false
+  modules-download-mode: readonly
+
+linters:
+  enable-all: true
+  disable:
+    - funlen
+    - gochecknoinits
+    - gocritic
+    - lll
+    - scopelint
+    - wsl
+    - containedctx
+    - exhaustivestruct
+    - exhaustruct
+    - gochecknoglobals
+    - gomnd
+    - ineffassign
+    - ireturn
+    - nlreturn
+    - paralleltest
+    - tagliatelle
+    - varnamelen
+    - testpackage
+    - golint
+    - maligned
+    - interfacer
+    - forcetypeassert
+    - nosnakecase
+    - structcheck
+    - deadcode
+    - varcheck
+    - ifshort
+    - gci
